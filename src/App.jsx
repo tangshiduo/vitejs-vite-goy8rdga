@@ -2,10 +2,38 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, Briefcase, Coffee, ChevronRight, RefreshCw, Star, Volume2, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 
 // --- Gemini API Configuration ---
-const apiKey = "AIzaSyCvemWugOF0jK7nLvmi0kkz57ZzExRcfns"; // API Key will be injected by the environment
+const apiKey = "AIzaSyCvemWugOF0jK7nLvmi0kkz57ZzExRcfns"; // 运行时环境会自动注入 Key，如果你在本地运行，请填入你的 Key
 const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
 
-// --- Prompts for the AI ---
+// --- Topics for Randomness ---
+// 通过预设具体的场景，强制 AI 每次生成不同维度的内容
+const SUB_TOPICS = {
+  business: [
+    "SQL query optimization discussion",
+    "Explaining a drop in KPI/metrics",
+    "Asking for a budget approval",
+    "Data visualization dashboard feedback",
+    "Project timeline delay",
+    "Quarterly Business Review (QBR) presentation",
+    "Machine Learning model accuracy",
+    "Stakeholder requirement gathering",
+    "Cleaning messy datasets",
+    "A/B testing results interpretation"
+  ],
+  life: [
+    "Ordering coffee with specific preferences",
+    "Complaining about the weather politely",
+    "Making weekend plans with a colleague",
+    "Asking for gym membership details",
+    "Returning a defective product",
+    "Discussing a popular TV show/Movie",
+    "Explaining a food allergy at a restaurant",
+    "Asking for directions in a complex building",
+    "Rescheduling a dentist appointment",
+    "Talking about travel experiences"
+  ]
+};
+
 const SYSTEM_PROMPT = `
 You are an expert English language coach specifically for a Chinese Data Analyst. 
 Your goal is to generate single-sentence translation exercises.
@@ -18,14 +46,15 @@ The output MUST be valid JSON with this structure:
     { "word": "Another Word", "def": "Definition" }
   ]
 }
+IMPORTANT: Do not output markdown code blocks (like \`\`\`json). Just output the raw JSON string.
 `;
 
 const PROMPTS = {
-  business: "Generate a sentence related to Data Analysis, Business Intelligence, or Corporate Strategy. Use professional vocabulary like 'ROI', 'churn rate', 'outlier', 'segmentation', 'YoY', 'drill down', etc. The sentence should be moderately complex.",
-  life: "Generate a sentence related to modern daily life in Western culture, casual conversation, travel, or office small talk. Use idiomatic expressions and phrasal verbs like 'catch up', 'rain check', 'play it by ear', etc."
+  business: "Generate a sentence related to Data Analysis, Business Intelligence, or Corporate Strategy.",
+  life: "Generate a sentence related to modern daily life in Western culture, casual conversation, travel, or office small talk."
 };
 
-// --- Fallback Data (In case API fails or for initial load) ---
+// --- Fallback Data (Only used on Error) ---
 const FALLBACK_DATA = {
   business: {
     chinese: "虽然我们的用户获取成本略有上升，但留存率相比上个季度提高了15%，这表明我们的目标用户更加精准了。",
@@ -49,13 +78,16 @@ const FALLBACK_DATA = {
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('business');
-  const [currentCard, setCurrentCard] = useState(FALLBACK_DATA['business']);
+  // Initialize as null so we show loading state first, NOT fallback data
+  const [currentCard, setCurrentCard] = useState(null); 
   const [isRevealed, setIsRevealed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  // Ref to track if it's the first mount to prevent double firing in strict mode (optional but good practice)
+  const hasFetched = useRef(false);
 
-  // --- 自动修复样式的魔法代码 ---
-  // 这段代码会自动去网上下载 "Tailwind CSS" 样式库，这样你的 App 就会变漂亮了
+  // --- Tailwind Script Injection ---
   useEffect(() => {
     if (!document.getElementById('tailwind-script')) {
       const script = document.createElement('script');
@@ -64,7 +96,15 @@ const App = () => {
       document.head.appendChild(script);
     }
   }, []);
-  // -------------------------
+
+  // --- Auto-load content on Mount ---
+  useEffect(() => {
+    // Only fetch if we haven't successfully loaded a card yet
+    if (!currentCard && !isLoading && !hasFetched.current) {
+        generateContent('business');
+        hasFetched.current = true;
+    }
+  }, []);
 
   // Function to call Gemini API
   const generateContent = async (type) => {
@@ -73,31 +113,41 @@ const App = () => {
     setIsRevealed(false);
 
     try {
+      // 1. Pick a random sub-topic to ensure variety
+      const topics = SUB_TOPICS[type];
+      const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+      
+      // 2. Add a timestamp or random seed to the prompt to discourage caching
+      const dynamicPrompt = `
+        ${SYSTEM_PROMPT}
+        
+        Task Context: ${PROMPTS[type]}
+        Specific Scenario: "${randomTopic}" (Make sure the sentence fits this specific scenario).
+        
+        Complexity: ${Math.random() > 0.5 ? "Intermediate" : "Advanced"}
+        Tone: ${type === 'business' ? "Professional & Analytical" : "Casual & Idiomatic"}
+      `;
+
       const response = await fetch(`${API_URL}?key=${apiKey}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `${SYSTEM_PROMPT}\n\nTask: ${PROMPTS[type]}\n\nGenerate ONE JSON object.`
-            }]
-          }],
+          contents: [{ parts: [{ text: dynamicPrompt }] }],
           generationConfig: {
-            responseMimeType: "application/json"
+            responseMimeType: "application/json",
+            temperature: 1.1, // Increased temperature for high creativity/randomness
           }
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`API Error: ${response.status}`);
 
       const result = await response.json();
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       
       if (text) {
+        // Clean up markdown if the model includes it (```json ... ```)
+        text = text.replace(/```json/g, '').replace(/```/g, '').trim();
         const newData = JSON.parse(text);
         setCurrentCard(newData);
       } else {
@@ -106,22 +156,20 @@ const App = () => {
 
     } catch (err) {
       console.error("Generation failed:", err);
-      setError("Failed to generate new content. Please try again.");
-      // Keep showing previous card or fallback on error, but showing error message is better
+      setError("Failed to generate. Loading offline backup...");
+      // Only use fallback if API fails
+      setCurrentCard(FALLBACK_DATA[type]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Initial load or tab change
   const handleTabChange = (tab) => {
+    if (tab === activeTab) return;
     setActiveTab(tab);
-    setIsRevealed(false);
-    // If we want to auto-load new content on tab change, uncomment below:
-    // generateContent(tab); 
-    // For now, let's just switch to fallback specific to that tab to be instant, 
-    // or keep current if it matches, but for demo let's load fresh or fallback.
-    setCurrentCard(FALLBACK_DATA[tab]);
+    // When switching tabs, clear current card to show loading state, then fetch
+    setCurrentCard(null); 
+    generateContent(tab);
   };
 
   const handleNext = () => {
@@ -130,10 +178,9 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 flex justify-center items-start pt-6 pb-6 px-4 font-sans text-slate-800">
-      {/* 模拟手机容器 */}
       <div className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border-8 border-slate-900 relative min-h-[800px] flex flex-col">
         
-        {/* iOS 顶部状态栏模拟 */}
+        {/* iOS Status Bar */}
         <div className="h-7 w-full bg-white flex justify-between items-center px-6 pt-2 select-none">
           <span className="text-xs font-semibold text-black">9:41</span>
           <div className="flex gap-1">
@@ -142,7 +189,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* 顶部导航 */}
+        {/* Header */}
         <div className="px-6 pt-6 pb-4 bg-white z-10">
           <div className="flex justify-between items-center mb-6">
             <div>
@@ -154,7 +201,7 @@ const App = () => {
             </div>
           </div>
 
-          {/* Tab 切换 */}
+          {/* Tabs */}
           <div className="flex p-1 bg-gray-100 rounded-xl mb-2">
             <button
               onClick={() => handleTabChange('life')}
@@ -183,85 +230,94 @@ const App = () => {
           </div>
         </div>
 
-        {/* 主要内容区域 - 可滚动 */}
+        {/* Main Content Area */}
         <div className="flex-1 overflow-y-auto bg-gray-50 px-6 py-4 relative">
           
-          {isLoading ? (
-             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 z-20 backdrop-blur-sm">
+          {/* Loading State Overlay */}
+          {isLoading || !currentCard ? (
+             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 z-20">
                 <Loader2 className="animate-spin text-indigo-600 mb-4" size={48} />
-                <p className="text-slate-600 font-medium animate-pulse">Generating new challenge...</p>
+                <p className="text-slate-600 font-medium animate-pulse">
+                   {isLoading ? "Consulting AI Coach..." : "Initializing..."}
+                </p>
+                <p className="text-slate-400 text-xs mt-2">Generating unique scenario</p>
              </div>
           ) : null}
 
           {error && (
-            <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-4 flex items-center gap-2 text-sm">
+            <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-4 flex items-center gap-2 text-sm z-30 relative">
               <AlertCircle size={16} />
               {error}
             </div>
           )}
 
-          <div className={`transition-all duration-300 ${isLoading ? 'opacity-40 scale-95' : 'opacity-100 scale-100'}`}>
-            
-            {/* 中文挑战卡片 */}
-            <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="bg-red-50 text-red-600 text-xs font-bold px-2 py-1 rounded-md uppercase tracking-wider">Translate this</span>
-              </div>
-              <h2 className="text-xl font-medium leading-relaxed text-slate-800 mb-2">
-                {currentCard.chinese}
-              </h2>
-              <div className="h-0.5 w-12 bg-gray-100 mt-4 rounded-full"></div>
-            </div>
-
-            {/* 核心交互区 */}
-            {!isRevealed ? (
-              <button 
-                onClick={() => setIsRevealed(true)}
-                className="w-full py-4 bg-indigo-600 active:bg-indigo-700 text-white rounded-xl font-semibold shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all transform active:scale-[0.98]"
-              >
-                <BookOpen size={20} />
-                Reveal Answer
-              </button>
-            ) : (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* 英文答案卡片 */}
-                <div className="bg-indigo-600 rounded-2xl p-6 shadow-lg shadow-indigo-200 text-white mb-6 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4 opacity-20">
-                    <Briefcase size={80} />
-                  </div>
-                  <div className="flex justify-between items-start mb-3 relative z-10">
-                    <span className="text-indigo-200 text-xs font-bold uppercase tracking-wider">English</span>
-                    <Volume2 className="text-indigo-200 cursor-pointer hover:text-white" size={20} />
-                  </div>
-                  <p className="text-lg font-medium leading-relaxed relative z-10">
-                    {currentCard.english}
-                  </p>
+          {/* Card Content - Only show if currentCard exists */}
+          {currentCard && (
+            <div className={`transition-all duration-500 ${isLoading ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}>
+              
+              {/* Chinese Card */}
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="bg-red-50 text-red-600 text-xs font-bold px-2 py-1 rounded-md uppercase tracking-wider">Translate this</span>
+                  {/* Debug: Show topic category simply if needed, helps understand variety */}
+                  {/* <span className="bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded-md">New Scenario</span> */}
                 </div>
+                <h2 className="text-xl font-medium leading-relaxed text-slate-800 mb-2">
+                  {currentCard.chinese}
+                </h2>
+                <div className="h-0.5 w-12 bg-gray-100 mt-4 rounded-full"></div>
+              </div>
 
-                {/* 知识点解析 */}
-                <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-24">
-                  <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-3">
-                    <div className="p-1.5 bg-yellow-100 rounded-md text-yellow-700">
-                      <Star size={14} fill="currentColor" />
+              {/* Interaction Area */}
+              {!isRevealed ? (
+                <button 
+                  onClick={() => setIsRevealed(true)}
+                  className="w-full py-4 bg-indigo-600 active:bg-indigo-700 text-white rounded-xl font-semibold shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 transition-all transform active:scale-[0.98]"
+                >
+                  <BookOpen size={20} />
+                  Reveal Answer
+                </button>
+              ) : (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  {/* English Card */}
+                  <div className="bg-indigo-600 rounded-2xl p-6 shadow-lg shadow-indigo-200 text-white mb-6 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-20">
+                      <Briefcase size={80} />
                     </div>
-                    <h3 className="font-semibold text-slate-700">Key Vocabulary</h3>
+                    <div className="flex justify-between items-start mb-3 relative z-10">
+                      <span className="text-indigo-200 text-xs font-bold uppercase tracking-wider">English</span>
+                      <Volume2 className="text-indigo-200 cursor-pointer hover:text-white" size={20} />
+                    </div>
+                    <p className="text-lg font-medium leading-relaxed relative z-10">
+                      {currentCard.english}
+                    </p>
                   </div>
-                  
-                  <div className="space-y-4">
-                    {currentCard.keywords.map((kw, idx) => (
-                      <div key={idx} className="group">
-                        <p className="font-bold text-indigo-600 text-sm mb-0.5">{kw.word}</p>
-                        <p className="text-slate-600 text-sm leading-snug">{kw.def}</p>
+
+                  {/* Keywords */}
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-24">
+                    <div className="flex items-center gap-2 mb-4 border-b border-gray-100 pb-3">
+                      <div className="p-1.5 bg-yellow-100 rounded-md text-yellow-700">
+                        <Star size={14} fill="currentColor" />
                       </div>
-                    ))}
+                      <h3 className="font-semibold text-slate-700">Key Vocabulary</h3>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {currentCard.keywords.map((kw, idx) => (
+                        <div key={idx} className="group">
+                          <p className="font-bold text-indigo-600 text-sm mb-0.5">{kw.word}</p>
+                          <p className="text-slate-600 text-sm leading-snug">{kw.def}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* 底部悬浮按钮 (仅在揭晓答案后显示) */}
+        {/* Floating Action Button */}
         {isRevealed && !isLoading && (
           <div className="absolute bottom-6 left-0 right-0 px-6 z-20 animate-in fade-in duration-300">
             <button 
@@ -270,7 +326,7 @@ const App = () => {
             >
               <span>Next Challenge</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-normal text-slate-300">Generate New</span>
+                <span className="text-xs font-normal text-slate-300">New Scenario</span>
                 <div className="bg-white/20 p-2 rounded-full">
                   <ArrowRight size={18} />
                 </div>
@@ -279,7 +335,7 @@ const App = () => {
           </div>
         )}
         
-        {/* iOS 底部Home指示条 */}
+        {/* iOS Home Indicator */}
         <div className="absolute bottom-1 left-0 right-0 flex justify-center pb-2 z-30 pointer-events-none">
           <div className="w-32 h-1 bg-slate-300 rounded-full"></div>
         </div>
