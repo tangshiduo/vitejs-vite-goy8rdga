@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, Briefcase, Coffee, ChevronRight, RefreshCw, Star, Volume2, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
 
 // --- Gemini API Configuration ---
-const apiKey = "AIzaSyDWdQ58ie4Du7dWysFnkonbwuHfYZIlhDk"; // API Key will be injected by the environment
-const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+const apiKey = "AIzaSyCvemWugOF0jK7nLvmi0kkz57ZzExRcfns"; // API Key will be injected by the environment
+const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
+
 // --- Prompts for the AI ---
 const SYSTEM_PROMPT = `
 You are an expert English language coach specifically for a Chinese Data Analyst. 
